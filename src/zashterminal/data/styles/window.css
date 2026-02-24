@@ -1,6 +1,4 @@
-/* zashterminal/data/styles/window.css
- * Main window styles for Ashy Terminal
- */
+/* Main window styles */
 
 /* Theme selector checkbuttons */
 .themeselector {
@@ -90,11 +88,11 @@ headerbar.main-header-bar {
 
 /* Paned and popover separators */
 paned separator {
-    background: var(--view-bg-color);
+    background: @window_bg_color;
 }
 
 popover.menu separator {
-    background-color: color-mix(in srgb, var(--headerbar-border-color) var(--border-opacity), transparent);
+    background-color: alpha(@borders, 0.35);
 }
 
 /* Tab bar scrollbar */
@@ -120,11 +118,11 @@ popover.menu separator {
 }
 
 .custom-tab-button.active {
-    background: color-mix(in srgb, currentColor 10%, transparent);
+    background: alpha(currentColor, 0.10);
 }
 
 .custom-tab-button:hover {
-    background: color-mix(in srgb, currentColor 7%, transparent);
+    background: alpha(currentColor, 0.07);
 }
 
 /* Sidebar toolbar view */
@@ -211,12 +209,12 @@ popover.menu separator {
 /* Sidebar container - simple box layout */
 .sidebar-container {
     min-width: 350px;
-    background: var(--bg-color);
+    background: @window_bg_color;
 }
 
 /* Sidebar toolbar */
 .sidebar-toolbar {
-    background: var(--bg-color);
+    background: @window_bg_color;
     padding-top: 2px;
 }
 
