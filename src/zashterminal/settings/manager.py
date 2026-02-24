@@ -1,5 +1,6 @@
 # zashterminal/settings/manager.py
 import json
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -150,8 +151,110 @@ class SettingsManager:
         self._app_css_provider = Gtk.CssProvider()
         self._provider_attached = False
         self._theme_css_cache: Dict[tuple, tuple] = {}
+        self._modern_css_supported = self._detect_modern_css_support()
         self._initialize()
         self.logger.info("Settings manager initialized")
+
+    def _detect_modern_css_support(self) -> bool:
+        """Best-effort feature gate for CSS vars/color-mix in Gtk CSS."""
+        try:
+            return (Gtk.get_major_version(), Gtk.get_minor_version()) >= (4, 16)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _parse_color_token(token: str) -> Optional[tuple[int, int, int]]:
+        token = token.strip().lower()
+        named = {
+            "black": (0, 0, 0),
+            "white": (255, 255, 255),
+        }
+        if token in named:
+            return named[token]
+        if token.startswith("#"):
+            token = token[1:]
+            if len(token) == 3:
+                token = "".join(ch * 2 for ch in token)
+            if len(token) != 6:
+                return None
+            try:
+                return tuple(int(token[i:i+2], 16) for i in (0, 2, 4))
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+        return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+    @classmethod
+    def _mix_rgb(cls, a: tuple[int, int, int], b: tuple[int, int, int], a_ratio: float) -> tuple[int, int, int]:
+        p = max(0.0, min(1.0, a_ratio))
+        q = 1.0 - p
+        return (
+            round(a[0] * p + b[0] * q),
+            round(a[1] * p + b[1] * q),
+            round(a[2] * p + b[2] * q),
+        )
+
+    @staticmethod
+    def _parse_mix_component(component: str) -> tuple[str, Optional[float]]:
+        comp = component.strip()
+        m = re.match(r"^(.*\S)\s+(\d+(?:\.\d+)?)%$", comp)
+        if m:
+            return m.group(1).strip(), float(m.group(2))
+        return comp, None
+
+    @classmethod
+    def _convert_color_mix_expr(cls, expr: str) -> str:
+        m = re.match(r"color-mix\(\s*in\s+srgb\s*,\s*(.+?)\s*,\s*(.+?)\s*\)$", expr.strip(), re.IGNORECASE)
+        if not m:
+            return expr
+        c1_raw, p1 = cls._parse_mix_component(m.group(1))
+        c2_raw, p2 = cls._parse_mix_component(m.group(2))
+
+        if p1 is None and p2 is None:
+            p1, p2 = 50.0, 50.0
+        elif p1 is None and p2 is not None:
+            p1 = max(0.0, 100.0 - p2)
+        elif p1 is not None and p2 is None:
+            p2 = max(0.0, 100.0 - p1)
+
+        c1_l = c1_raw.strip().lower()
+        c2_l = c2_raw.strip().lower()
+        if c2_l == "transparent" and cls._parse_color_token(c1_raw) is not None:
+            return f"alpha({c1_raw}, {p1 / 100.0:.3f})"
+        if c1_l == "transparent" and cls._parse_color_token(c2_raw) is not None:
+            return f"alpha({c2_raw}, {p2 / 100.0:.3f})"
+
+        rgb1 = cls._parse_color_token(c1_raw)
+        rgb2 = cls._parse_color_token(c2_raw)
+        if rgb1 is None or rgb2 is None:
+            return expr
+        return cls._rgb_to_hex(cls._mix_rgb(rgb1, rgb2, p1 / 100.0))
+
+    @classmethod
+    def _normalize_css_for_compat(cls, css: str, modern_supported: bool) -> str:
+        if modern_supported or not css:
+            return css
+
+        def replace_mix(match: re.Match) -> str:
+            return cls._convert_color_mix_expr(match.group(0))
+
+        css = re.sub(r"color-mix\(\s*in\s+srgb\s*,\s*[^()]*?(?:\([^()]*\)[^()]*)*?,\s*[^()]*?(?:\([^()]*\)[^()]*)*?\)", replace_mix, css, flags=re.IGNORECASE)
+        css = re.sub(
+            r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9]*\.?[0-9]+)\s*\)",
+            lambda m: f"alpha(#{int(m.group(1)):02x}{int(m.group(2)):02x}{int(m.group(3)):02x}, {float(m.group(4)):.3f})",
+            css,
+            flags=re.IGNORECASE,
+        )
+        css = re.sub(
+            r"(^|\n)\s*:root\s*\{",
+            lambda m: f"{m.group(1)}window {{",
+            css,
+            flags=re.IGNORECASE,
+        )
+        return css
 
     def _initialize(self):
         try:
@@ -542,7 +645,9 @@ class SettingsManager:
         if user_transparency > 0:
             css_provider = Gtk.CssProvider()
             css = ".terminal-tab-view > .view { background-color: transparent; } .background { background: transparent; }"
-            css_provider.load_from_data(css.encode("utf-8"))
+            css_provider.load_from_data(
+                self._normalize_css_for_compat(css, self._modern_css_supported).encode("utf-8")
+            )
             style_context.add_provider(
                 css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
@@ -729,7 +834,9 @@ class SettingsManager:
                     )
                     self.logger.info("Removed existing transparency provider")
                 provider = Gtk.CssProvider()
-                provider.load_from_data(css.encode("utf-8"))
+                provider.load_from_data(
+                    self._normalize_css_for_compat(css, self._modern_css_supported).encode("utf-8")
+                )
                 Gtk.StyleContext.add_provider_for_display(
                     Gdk.Display.get_default(),
                     provider,
@@ -753,7 +860,7 @@ class SettingsManager:
         except Exception as e:
             self.logger.warning(f"Failed to apply headerbar transparency: {e}")
 
-    def apply_gtk_terminal_theme(self, window) -> None:
+    def _apply_gtk_terminal_theme_full(self, window) -> None:
         """
         Apply terminal colors to GTK elements when gtk_theme is 'terminal'.
         This includes headerbar, tabs, sidebar, popovers, file manager, and dialogs.
@@ -793,7 +900,9 @@ class SettingsManager:
                     )
                 # Apply cached CSS
                 provider = Gtk.CssProvider()
-                provider.load_from_data(css.encode("utf-8"))
+                provider.load_from_data(
+                    self._normalize_css_for_compat(css, self._modern_css_supported).encode("utf-8")
+                )
                 Gtk.StyleContext.add_provider_for_display(
                     Gdk.Display.get_default(),
                     provider,
@@ -1066,10 +1175,10 @@ class SettingsManager:
                     background-color: color-mix(in srgb, {fg_color} {selected_alpha}, {bg_color});
                 }}
                 .inline-context-menu button.destructive-action {{
-                    color: @destructive_color;
+                    color: #c01c28;
                 }}
                 .inline-context-menu button.destructive-action:hover {{
-                    background-color: alpha(@destructive_color, 0.1);
+                    background-color: alpha(#c01c28, 0.1);
                 }}
                 """)
 
@@ -1161,10 +1270,10 @@ class SettingsManager:
                     background-color: color-mix(in srgb, {fg_color} {selected_alpha}, {bg_color});
                 }}
                 popover.sidebar-popover .inline-context-menu button.destructive-action {{
-                    color: @destructive_color;
+                    color: #c01c28;
                 }}
                 popover.sidebar-popover .inline-context-menu button.destructive-action:hover {{
-                    background-color: alpha(@destructive_color, 0.1);
+                    background-color: alpha(#c01c28, 0.1);
                 }}
                 """)
             else:
@@ -1295,17 +1404,28 @@ class SettingsManager:
                     color: {fg_color};
                 }}
                 .file-manager-main-box scrolledwindow,
+                .file-manager-main-box viewport,
                 .file-manager-main-box columnview,
-                .file-manager-main-box columnview row {{
+                .file-manager-main-box columnview *,
+                .file-manager-main-box listview,
+                .file-manager-main-box listview row,
+                .file-manager-main-box columnview row,
+                .file-manager-main-box columnview cell {{
                     background-color: {bg_color};
                     color: {fg_color};
                 }}
+                .file-manager-main-box columnview row > * {{
+                    color: {fg_color};
+                }}
+                .file-manager-main-box listview row:hover,
                 .file-manager-main-box columnview row:hover {{
                     background-color: color-mix(in srgb, {fg_color} {hover_alpha}, {bg_color});
                 }}
+                .file-manager-main-box listview row:selected,
                 .file-manager-main-box columnview row:selected {{
                     background-color: color-mix(in srgb, {fg_color} {selected_alpha}, {bg_color});
                 }}
+                .file-manager-main-box listview row:selected:hover,
                 .file-manager-main-box columnview row:selected:hover {{
                     background-color: color-mix(in srgb, {fg_color} 18%, {bg_color});
                 }}
@@ -1549,8 +1669,8 @@ class SettingsManager:
                     color: {fg_color};
                 }}
                 .command-form-dialog .command-preview {{
-                    background-color: color-mix(in srgb, {fg_color} 5%, {bg_color}) !important;
-                    color: {fg_color} !important;
+                    background-color: color-mix(in srgb, {fg_color} 5%, {bg_color});
+                    color: {fg_color};
                 }}
                 .command-form-dialog .command-preview label {{
                     color: {fg_color};
@@ -1601,7 +1721,9 @@ class SettingsManager:
             self._theme_css_cache[cache_key] = (css, None)
 
             provider = Gtk.CssProvider()
-            provider.load_from_data(css.encode("utf-8"))
+            provider.load_from_data(
+                self._normalize_css_for_compat(css, self._modern_css_supported).encode("utf-8")
+            )
             Gtk.StyleContext.add_provider_for_display(
                 Gdk.Display.get_default(),
                 provider,
@@ -1878,7 +2000,7 @@ class SettingsManager:
         }}
         """
 
-        return css
+        return self._normalize_css_for_compat(css, self._modern_css_supported)
 
     def remove_gtk_terminal_theme(self, window) -> None:
         """Removes the custom CSS provider for the terminal theme."""
@@ -2015,7 +2137,9 @@ class SettingsManager:
 
             params = ThemeEngine.get_theme_params(scheme, transparency)
             full_css = ThemeEngine.generate_app_css(params, gtk_theme)
-            self._app_css_provider.load_from_data(full_css.encode("utf-8"))
+            self._app_css_provider.load_from_data(
+                self._normalize_css_for_compat(full_css, self._modern_css_supported).encode("utf-8")
+            )
 
             if window:
                 window.queue_draw()
@@ -2030,7 +2154,11 @@ class SettingsManager:
             headerbar.queue_draw()
 
     def apply_gtk_terminal_theme(self, window) -> None:
-        # Kept for compatibility with existing zashterminal callers.
+        # Keep public API, but restore the full terminal-theme CSS path for
+        # sidebar/file-manager/session views while preserving the newer app CSS provider.
+        if self.get("gtk_theme") == "terminal":
+            self._apply_gtk_terminal_theme_full(window)
+            return
         self._update_app_theme_css(window)
 
     def remove_gtk_terminal_theme(self, window) -> None:
