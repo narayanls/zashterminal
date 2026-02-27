@@ -138,6 +138,42 @@ curl -fsSLO https://raw.githubusercontent.com/leoberbert/zashterminal/refs/heads
 bash install.sh
 ```
 
+### WSL on Windows (Experimental)
+
+Zashterminal can run on WSL, but this is still **experimental** and may present issues depending on your WSLg/graphics/input setup.
+
+- Tested environment: **Ubuntu 24.04 on WSL**
+- Installation method: same Debian/Ubuntu flow using `install.sh`
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leoberbert/zashterminal/refs/heads/main/install.sh | bash
+```
+
+If you use a language other than English (default), configure locale and keyboard (example for Brazilian Portuguese):
+
+```bash
+# ~/.bashrc
+export LANG=pt_BR.UTF-8
+export LC_ALL=pt_BR.UTF-8
+export LANGUAGE=pt_BR:pt
+```
+
+```bash
+sudo apt update
+sudo apt install x11-xkb-utils
+setxkbmap br
+```
+
+Also add to `~/.bashrc`:
+
+```bash
+if [ -n "$DISPLAY" ]; then
+    setxkbmap br
+fi
+```
+
+After changing your `~/.bashrc`, close WSL completely and open it again.
+
 ## Usage
 
 ```bash
