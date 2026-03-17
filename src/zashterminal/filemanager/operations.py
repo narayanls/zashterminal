@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import threading
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from gi.repository import GLib
 
@@ -76,7 +76,8 @@ class FileOperations:
     def __init__(self, session_item: SessionItem):
         self.session_item = session_item
         self.logger = get_logger("zashterminal.filemanager.operations")
-        self._command_cache = {}
+        self._command_cache: Dict[str, Dict[str, bool]] = {}
+        self._remote_home_cache: Dict[str, str] = {}
         self._active_processes = {}
         self._lock = threading.Lock()
 
@@ -149,6 +150,54 @@ class FileOperations:
             return False
         return self._is_command_available(session, command, use_cache=use_cache)
 
+    def _get_remote_home_directory(self, session: SessionItem) -> Optional[str]:
+        """Resolve and cache the remote HOME directory for a session."""
+        session_key = self._get_session_key(session)
+        cached_home = self._remote_home_cache.get(session_key)
+        if cached_home:
+            return cached_home
+
+        success, output = self.execute_command_on_session(
+            ["printenv", "HOME"], session_override=session, timeout=8
+        )
+        if not success:
+            return None
+
+        home_dir = output.strip().splitlines()[0].strip() if output.strip() else ""
+        if not home_dir.startswith("/"):
+            return None
+
+        self._remote_home_cache[session_key] = home_dir
+        return home_dir
+
+    def _normalize_remote_path(self, path: str, session: SessionItem) -> str:
+        """
+        Normalize remote paths with HOME tokens so transfer tools don't treat
+        them as literal directories (e.g. '$HOME/foo').
+        """
+        raw_path = (path or "").strip()
+        if not raw_path:
+            return raw_path
+
+        suffix = None
+        if raw_path in ("$HOME", "${HOME}", "~"):
+            suffix = ""
+        elif raw_path.startswith("$HOME/"):
+            suffix = raw_path[len("$HOME") :]
+        elif raw_path.startswith("${HOME}/"):
+            suffix = raw_path[len("${HOME}") :]
+        elif raw_path.startswith("~/"):
+            suffix = raw_path[1:]
+        else:
+            return raw_path
+
+        home_dir = self._get_remote_home_directory(session)
+        if home_dir:
+            return f"{home_dir.rstrip('/')}{suffix}"
+
+        # Safe fallback: resolve relative to remote login directory.
+        return f".{suffix}" if suffix else "."
+
     def execute_command_on_session(
         self,
         command: List[str],
@@ -206,6 +255,9 @@ class FileOperations:
 
     def get_remote_file_timestamp(self, remote_path: str) -> Optional[int]:
         """Gets the modification timestamp of a remote file."""
+        if self.session_item and self.session_item.is_ssh():
+            remote_path = self._normalize_remote_path(remote_path, self.session_item)
+
         # The command 'stat -c %Y' is standard on GNU systems for getting the epoch timestamp.
         command = ["stat", "-c", "%Y", remote_path]
         success, output = self.execute_command_on_session(command)
@@ -366,11 +418,14 @@ class FileOperations:
                     ssh_cmd = (
                         f"ssh -o ControlPath={spawner._get_ssh_control_path(session)}"
                     )
+                    remote_path_normalized = self._normalize_remote_path(
+                        remote_path, session
+                    )
 
                     # FIX: Add trailing slash to source for rsync directory copy
-                    source_path_rsync = remote_path
+                    source_path_rsync = remote_path_normalized
                     if is_directory:
-                        source_path_rsync = remote_path.rstrip("/") + "/"
+                        source_path_rsync = remote_path_normalized.rstrip("/") + "/"
 
                     transfer_cmd = [
                         "rsync",
@@ -441,8 +496,11 @@ class FileOperations:
                     with tempfile.NamedTemporaryFile(
                         mode="w", delete=False, suffix=".sftp"
                     ) as batch_file:
+                        remote_path_normalized = self._normalize_remote_path(
+                            remote_path, session
+                        )
                         batch_file.write(
-                            f'get -r "{remote_path}" "{dest_path_sftp}"\nquit\n'
+                            f'get -r "{remote_path_normalized}" "{dest_path_sftp}"\nquit\n'
                         )
                         batch_file_path = batch_file.name
                     transfer_cmd = sftp_cmd_base + ["-b", batch_file_path]
@@ -506,6 +564,9 @@ class FileOperations:
                     ssh_cmd = (
                         f"ssh -o ControlPath={spawner._get_ssh_control_path(session)}"
                     )
+                    remote_path_normalized = self._normalize_remote_path(
+                        remote_path, session
+                    )
 
                     # FIX: Add trailing slash to source for rsync directory copy
                     source_path_rsync = str(local_path)
@@ -519,7 +580,7 @@ class FileOperations:
                         "-e",
                         ssh_cmd,
                         source_path_rsync,
-                        f"{session.user}@{session.host}:{remote_path}",
+                        f"{session.user}@{session.host}:{remote_path_normalized}",
                     ]
                     process = self._start_process(transfer_id, transfer_cmd)
 
@@ -574,9 +635,9 @@ class FileOperations:
                     )
 
                     # FIX: For SFTP directory copy, destination must be the parent directory
-                    dest_path_sftp = remote_path
+                    dest_path_sftp = self._normalize_remote_path(remote_path, session)
                     if is_directory:
-                        dest_path_sftp = str(Path(remote_path).parent)
+                        dest_path_sftp = str(Path(dest_path_sftp).parent)
 
                     with tempfile.NamedTemporaryFile(
                         mode="w", delete=False, suffix=".sftp"
