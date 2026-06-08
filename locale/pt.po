@@ -4737,6 +4737,26 @@ msgstr "O chaveiro do sistema não está disponível - a senha será armazenada 
 msgid "SSH Options"
 msgstr "Opções SSH"
 # 
+# File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 730
+#: NEEDS WORK
+msgid "SSH Session Type"
+msgstr "Tipo de Sessão SSH"
+# 
+# File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 731
+#: NEEDS WORK
+msgid "Use Network Device CLI for switches, routers and appliances"
+msgstr "Use CLI de Equipamento de Rede para switches, roteadores e appliances"
+# 
+# File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 734
+#: NEEDS WORK
+msgid "Unix/Linux Shell"
+msgstr "Shell Unix/Linux"
+# 
+# File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 734
+#: NEEDS WORK
+msgid "Network Device CLI"
+msgstr "CLI de Equipamento de Rede"
+# 
 # File: usr/share/zashterminal/ui/dialogs/session_edit_dialog.py, line: 309
 #: NEEDS WORK
 msgid "Run Command After Login"
