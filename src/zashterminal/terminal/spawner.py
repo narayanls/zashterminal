@@ -1029,6 +1029,12 @@ class ProcessSpawner:
         }
         if persist_duration > 0:
             ssh_options["ControlPersist"] = str(persist_duration)
+        if command_type == "ssh" and getattr(
+            session, "uses_network_device_mode", False
+        ):
+            ssh_options.pop("ControlPersist", None)
+            ssh_options.pop("ControlMaster", None)
+            ssh_options.pop("ControlPath", None)
         if command_type == "ssh" and getattr(session, "x11_forwarding", False):
             ssh_options.pop("ControlPersist", None)
             ssh_options.pop("ControlMaster", None)
@@ -1079,7 +1085,16 @@ class ProcessSpawner:
                 insertion_index = max(len(cmd) - 1, 1)
                 cmd[insertion_index:insertion_index] = ["-L", forward_spec]
 
-        if command_type == "ssh":
+        if command_type == "ssh" and getattr(
+            session, "uses_network_device_mode", False
+        ):
+            if "-tt" not in cmd and "-t" not in cmd:
+                cmd.insert(1, "-tt")
+            if initial_command:
+                self.logger.info(
+                    "Ignoring initial SSH command for Network Device CLI session."
+                )
+        elif command_type == "ssh":
             # Restore OSC7 emission for remote CWD tracking (used by the built-in
             # file manager via VTE's current-directory-uri). We skip fish because
             # the PROMPT_COMMAND pattern is bash-specific and can break fish login.
