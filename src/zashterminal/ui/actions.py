@@ -73,6 +73,7 @@ class WindowActions:
             "toggle-broadcast": self.toggle_broadcast,
             "show-command-manager": self.show_command_manager,
             "import-securecrt-sessions": self.import_securecrt_sessions,
+            "toggle-tftp-server": self.toggle_tftp_server,
             "preferences": self.preferences,
             "shortcuts": self.shortcuts,
             "new-window": self.new_window,
@@ -417,6 +418,28 @@ class WindowActions:
     def show_command_manager(self, *_args):
         self._hide_tooltip()
         self.window._show_command_manager_dialog()
+
+    def toggle_tftp_server(self, *_args):
+        self._hide_tooltip()
+        if self.window.tftp_server.is_running:
+            self.window.tftp_server.stop()
+            return
+
+        from .dialogs import TftpServerDialog
+
+        def start_server(port: int, upload_dir: str, download_dir: str):
+            try:
+                self.window.tftp_server.start(port, upload_dir, download_dir)
+            except Exception as exc:
+                self.logger.error(f"Failed to start TFTP server: {exc}")
+                self.window._show_tftp_error(exc)
+
+        dialog = TftpServerDialog(
+            self.window,
+            self.window.settings_manager,
+            start_server,
+        )
+        dialog.present()
 
     def preferences(self, *_args):
         self._hide_tooltip()
