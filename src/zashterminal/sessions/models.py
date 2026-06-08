@@ -107,6 +107,7 @@ class SessionItem(BaseModel):
         sftp_remote_directory: str = "",
         port_forwardings: Optional[List[Dict[str, Any]]] = None,
         x11_forwarding: bool = False,
+        ssh_connection_mode: str = "shell",
         source: str = "user",
         local_working_directory: str = "",
         local_startup_command: str = "",
@@ -150,6 +151,11 @@ class SessionItem(BaseModel):
         if port_forwardings:
             self.port_forwardings = port_forwardings
         self._x11_forwarding = bool(x11_forwarding)
+        self._ssh_connection_mode = (
+            ssh_connection_mode
+            if ssh_connection_mode in {"shell", "network_device"}
+            else "shell"
+        )
         self._source = source or "user"
         # Local terminal specific properties
         self._local_working_directory = (
@@ -421,6 +427,21 @@ class SessionItem(BaseModel):
             self._mark_modified()
 
     @property
+    def ssh_connection_mode(self) -> str:
+        return self._ssh_connection_mode
+
+    @ssh_connection_mode.setter
+    def ssh_connection_mode(self, value: str):
+        new_value = value if value in {"shell", "network_device"} else "shell"
+        if self._ssh_connection_mode != new_value:
+            self._ssh_connection_mode = new_value
+            self._mark_modified()
+
+    @property
+    def uses_network_device_mode(self) -> bool:
+        return self.is_ssh() and self._ssh_connection_mode == "network_device"
+
+    @property
     def source(self) -> str:
         return self._source
 
@@ -576,6 +597,7 @@ class SessionItem(BaseModel):
             "sftp_remote_directory": self.sftp_remote_directory,
             "port_forwardings": self.port_forwardings,
             "x11_forwarding": self.x11_forwarding,
+            "ssh_connection_mode": self.ssh_connection_mode,
             "local_working_directory": self.local_working_directory,
             "local_startup_command": self.local_startup_command,
 
@@ -608,6 +630,7 @@ class SessionItem(BaseModel):
             sftp_remote_directory=data.get("sftp_remote_directory", ""),
             port_forwardings=data.get("port_forwardings", []),
             x11_forwarding=data.get("x11_forwarding", False),
+            ssh_connection_mode=data.get("ssh_connection_mode", "shell"),
             source=data.get("source", "user"),
             local_working_directory=data.get("local_working_directory", ""),
             local_startup_command=data.get("local_startup_command", ""),

@@ -69,6 +69,7 @@ class SessionEditDialog(BaseDialog):
             dict(item) for item in self.editing_session.port_forwardings
         ]
         self.x11_switch: Optional[Adw.SwitchRow] = None
+        self.ssh_mode_combo: Optional[Adw.ComboRow] = None
         # Local terminal options
         self.local_terminal_group: Optional[Adw.PreferencesGroup] = None
         self.startup_commands_group: Optional[Adw.PreferencesGroup] = None
@@ -725,6 +726,21 @@ class SessionEditDialog(BaseDialog):
         # Other SSH options in a separate group
         options_group = Adw.PreferencesGroup()
 
+        self.ssh_mode_combo = Adw.ComboRow(
+            title=_("SSH Session Type"),
+            subtitle=_("Use Network Device CLI for switches, routers and appliances"),
+        )
+        self.ssh_mode_combo.set_model(
+            Gtk.StringList.new([_("Unix/Linux Shell"), _("Network Device CLI")])
+        )
+        self.ssh_mode_combo.set_selected(
+            1
+            if self.editing_session.ssh_connection_mode == "network_device"
+            else 0
+        )
+        self.ssh_mode_combo.connect("notify::selected", self._on_ssh_mode_changed)
+        options_group.add(self.ssh_mode_combo)
+
         # X11 Forwarding toggle
         self.x11_switch = Adw.SwitchRow(
             title=_("Enable X11 Forwarding"),
@@ -770,6 +786,7 @@ class SessionEditDialog(BaseDialog):
         # Update initial visibility
         self._update_post_login_command_state()
         self._update_sftp_state()
+        self._update_network_device_state()
 
     def _create_port_forward_widgets(self, parent_group: Adw.PreferencesGroup) -> None:
         """Create port forwarding widgets inside the SSH Options group."""
@@ -1103,12 +1120,14 @@ class SessionEditDialog(BaseDialog):
     def _on_user_changed(self, entry: Gtk.Entry) -> None:
         self._mark_changed()
 
-    def _on_port_changed(self, spin_row, _param) -> None:
+    def _on_port_changed(self, value: float) -> None:
         self._mark_changed()
-        port = int(spin_row.get_value())
-        spin_row.remove_css_class(
+        if not self.port_row:
+            return
+        port = int(value)
+        self.port_row.remove_css_class(
             "error"
-        ) if 1 <= port <= 65535 else spin_row.add_css_class("error")
+        ) if 1 <= port <= 65535 else self.port_row.add_css_class("error")
 
     def _on_auth_changed(self, combo_row, param) -> None:
         self._update_auth_visibility()
@@ -1159,6 +1178,10 @@ class SessionEditDialog(BaseDialog):
         if self.sftp_local_entry and not switch_row.get_active():
             self.sftp_local_entry.remove_css_class("error")
 
+    def _on_ssh_mode_changed(self, combo_row: Adw.ComboRow, _param) -> None:
+        self._mark_changed()
+        self._update_network_device_state()
+
     def _on_sftp_local_changed(self, entry: Gtk.Entry) -> None:
         entry.remove_css_class("error")
         self._mark_changed()
@@ -1187,9 +1210,12 @@ class SessionEditDialog(BaseDialog):
                 self.sftp_switch.set_sensitive(is_ssh)
                 if not is_ssh:
                     self.sftp_switch.set_active(False)
+            if self.ssh_mode_combo:
+                self.ssh_mode_combo.set_sensitive(is_ssh)
         self._update_port_forward_state()
         self._update_post_login_command_state()
         self._update_sftp_state()
+        self._update_network_device_state()
 
     def _update_local_visibility(self) -> None:
         """Update visibility of local terminal options based on session type."""
@@ -1210,6 +1236,7 @@ class SessionEditDialog(BaseDialog):
         self._update_port_forward_state()
         self._update_post_login_command_state()
         self._update_sftp_state()
+        self._update_network_device_state()
 
     def _update_port_forward_state(self) -> None:
         is_ssh_session = (
@@ -1231,17 +1258,47 @@ class SessionEditDialog(BaseDialog):
         is_ssh_session = (
             self.type_combo.get_selected() == 1 if self.type_combo else False
         )
+        is_network_device = (
+            self.ssh_mode_combo is not None
+            and self.ssh_mode_combo.get_selected() == 1
+            and is_ssh_session
+        )
         # Control visibility of switch and container based on session type
-        self.post_login_switch.set_sensitive(is_ssh_session)
+        self.post_login_switch.set_sensitive(is_ssh_session and not is_network_device)
         if (
             hasattr(self, "post_login_command_container")
             and self.post_login_command_container
         ):
             # Show container only if SSH session AND switch is active
-            is_enabled = self.post_login_switch.get_active() and is_ssh_session
+            is_enabled = (
+                self.post_login_switch.get_active()
+                and is_ssh_session
+                and not is_network_device
+            )
             self.post_login_command_container.set_visible(is_enabled)
-        if not is_ssh_session:
+        if not is_ssh_session or is_network_device:
             self.post_login_entry.remove_css_class("error")
+
+    def _update_network_device_state(self) -> None:
+        is_ssh_session = (
+            self.type_combo.get_selected() == 1 if self.type_combo else False
+        )
+        is_network_device = (
+            self.ssh_mode_combo is not None
+            and self.ssh_mode_combo.get_selected() == 1
+            and is_ssh_session
+        )
+        if is_network_device:
+            if self.post_login_switch:
+                self.post_login_switch.set_active(False)
+            if self.x11_switch:
+                self.x11_switch.set_active(False)
+            if self.sftp_switch:
+                self.sftp_switch.set_active(False)
+        if self.x11_switch:
+            self.x11_switch.set_sensitive(is_ssh_session and not is_network_device)
+        if self.sftp_switch:
+            self.sftp_switch.set_sensitive(is_ssh_session and not is_network_device)
 
     def _update_sftp_state(self) -> None:
         if (
@@ -1579,6 +1636,23 @@ class SessionEditDialog(BaseDialog):
             if self.x11_switch and session_data["session_type"] == "ssh"
             else False
         )
+        session_data["ssh_connection_mode"] = (
+            "network_device"
+            if (
+                self.ssh_mode_combo
+                and self.ssh_mode_combo.get_selected() == 1
+                and session_data["session_type"] == "ssh"
+            )
+            else "shell"
+        )
+        is_network_device = session_data["ssh_connection_mode"] == "network_device"
+        if is_network_device:
+            session_data["post_login_command_enabled"] = False
+            session_data["post_login_command"] = ""
+            session_data["sftp_session_enabled"] = False
+            session_data["sftp_local_directory"] = ""
+            session_data["sftp_remote_directory"] = ""
+            session_data["x11_forwarding"] = False
 
         raw_password = ""
         if session_data["session_type"] == "ssh":
@@ -1608,6 +1682,7 @@ class SessionEditDialog(BaseDialog):
             session_data["sftp_session_enabled"] = False
             session_data["port_forwardings"] = []
             session_data["x11_forwarding"] = False
+            session_data["ssh_connection_mode"] = "shell"
             # Set local terminal fields
             session_data["local_working_directory"] = (
                 self.local_working_dir_entry.get_text().strip()

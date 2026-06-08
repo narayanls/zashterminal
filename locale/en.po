@@ -5192,6 +5192,26 @@ msgid "SSH Options"
 msgstr "SSH Options"
 
 #
+# File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 730
+msgid "SSH Session Type"
+msgstr "SSH Session Type"
+
+#
+# File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 731
+msgid "Use Network Device CLI for switches, routers and appliances"
+msgstr "Use Network Device CLI for switches, routers and appliances"
+
+#
+# File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 734
+msgid "Unix/Linux Shell"
+msgstr "Unix/Linux Shell"
+
+#
+# File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 734
+msgid "Network Device CLI"
+msgstr "Network Device CLI"
+
+#
 # File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 680
 msgid "Run Command After Login"
 msgstr "Run Command After Login"
