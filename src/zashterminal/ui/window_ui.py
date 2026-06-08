@@ -768,7 +768,7 @@ class WindowUIBuilder:
         real_popover, self.font_sizer_widget = MainApplicationMenu.create_main_popover(
             self.window
         )
-        real_popover.connect("show", lambda p: self.tooltip_helper.hide())
+        real_popover.connect("show", self._on_main_menu_popover_show)
         self._main_menu_popover = real_popover
         self.menu_button.set_popover(real_popover)
 
@@ -783,10 +783,26 @@ class WindowUIBuilder:
             popover, self.font_sizer_widget = MainApplicationMenu.create_main_popover(
                 self.window
             )
-            popover.connect("show", lambda p: self.tooltip_helper.hide())
+            popover.connect("show", self._on_main_menu_popover_show)
             self._main_menu_popover = popover
             self.menu_button.set_popover(popover)
         # Popover will be shown automatically by MenuButton
+
+    def _on_main_menu_popover_show(self, popover: Gtk.Popover) -> None:
+        self.tooltip_helper.hide()
+        from .menus import MainApplicationMenu
+
+        MainApplicationMenu.update_tftp_server_label(self.window, popover)
+
+    def update_tftp_server_menu_state(self) -> None:
+        if self._main_menu_popover is None:
+            return
+
+        from .menus import MainApplicationMenu
+
+        MainApplicationMenu.update_tftp_server_label(
+            self.window, self._main_menu_popover
+        )
 
     def _create_ai_chat_panel(self) -> None:
         """Create the AI chat panel widget (lazy initialization)."""

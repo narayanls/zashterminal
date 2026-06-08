@@ -17,6 +17,12 @@ from .sessions.operations import SessionOperations
 from .sessions.tree import SessionTreeView
 from .settings.manager import SettingsManager
 from .state.window_state import WindowStateManager
+from .filemanager.tftp_server import (
+    TftpBindError,
+    TftpFileError,
+    TftpNetworkError,
+    TftpServer,
+)
 from .terminal.ai_assistant import TerminalAiAssistant
 from .terminal.manager import TerminalManager
 from .terminal.tabs import TabManager
@@ -51,6 +57,7 @@ class CommTerminalWindow(Adw.ApplicationWindow):
         self.layouts: List[LayoutItem] = []
         self.active_temp_files = weakref.WeakKeyDictionary()
         self.command_manager_dialog = None  # For Command Manager dialog
+        self.tftp_server = None
 
         # Search state tracking
         self.current_search_terminal = None
@@ -206,6 +213,10 @@ class CommTerminalWindow(Adw.ApplicationWindow):
 
         # UI/View-Model Layer
         self.terminal_manager = TerminalManager(self, self.settings_manager)
+        self.tftp_server = TftpServer(
+            on_running_changed=self._on_tftp_server_running_changed,
+            on_error=self._on_tftp_server_error,
+        )
         # Start terminal pre-creation in background for faster first tab
         if not self._is_for_detached_tab:
             self.terminal_manager.prepare_initial_terminal()
@@ -1613,8 +1624,44 @@ class CommTerminalWindow(Adw.ApplicationWindow):
         for fm in self.tab_manager.file_managers.values():
             fm.shutdown(None)
 
+        if self.tftp_server:
+            self.tftp_server.stop()
+
         # Clean up CSS providers to prevent memory leaks
         self.settings_manager.cleanup_css_providers(self)
+
+    def _on_tftp_server_running_changed(self, running: bool) -> None:
+        def notify():
+            title = _("TFTP server started.") if running else _("TFTP server stopped.")
+            if hasattr(self, "ui_builder") and self.ui_builder:
+                self.ui_builder.update_tftp_server_menu_state()
+            if hasattr(self, "toast_overlay") and self.toast_overlay:
+                self.toast_overlay.add_toast(Adw.Toast(title=title))
+            return GLib.SOURCE_REMOVE
+
+        GLib.idle_add(notify)
+
+    def _on_tftp_server_error(self, error: Exception) -> None:
+        GLib.idle_add(self._show_tftp_error, error)
+
+    def _show_tftp_error(self, error: Exception) -> bool:
+        if isinstance(error, TftpBindError):
+            message = _("TFTP server bind error!")
+        elif isinstance(error, TftpFileError):
+            message = _("TFTP server file error!")
+        elif isinstance(error, TftpNetworkError):
+            message = _("TFTP server network error!")
+        else:
+            message = _("TFTP server error!")
+
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            title=_("Warning"),
+            body=message,
+        )
+        dialog.add_response("ok", _("OK"))
+        dialog.present()
+        return GLib.SOURCE_REMOVE
 
     def destroy(self) -> None:
         self._perform_cleanup()

@@ -237,6 +237,10 @@ class DefaultSettings:
             # Remote Editing
             "use_system_tmp_for_edit": False,
             "clear_remote_edit_files_on_exit": True,
+            # TFTP Server
+            "tftp_server_port": 6969,
+            "tftp_server_upload_dir": str(Path.home()),
+            "tftp_server_download_dir": str(Path.home()),
             # AI Assistant
             "ai_assistant_enabled": False,
             "ai_assistant_provider": "groq",

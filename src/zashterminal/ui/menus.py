@@ -178,6 +178,11 @@ class MainApplicationMenu:
                 "label": _("Import SecureCRT Sessions"),
                 "action": "win.import-securecrt-sessions",
             },
+            {
+                "label": _("Start TFTP Server"),
+                "action": "win.toggle-tftp-server",
+                "dynamic_label": "tftp_server",
+            },
             {"label": _("About"), "action": "app.about"},
             "---",
             {"label": _("Quit"), "action": "app.quit"},
@@ -185,6 +190,7 @@ class MainApplicationMenu:
         actions_that_close_menu = {
             "win.new-window",
             "win.import-securecrt-sessions",
+            "win.toggle-tftp-server",
             "win.preferences",
             "win.highlight-settings",
             "win.configure-ai",
@@ -205,6 +211,9 @@ class MainApplicationMenu:
                 box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=24)
                 button.set_child(box)
                 action_label = Gtk.Label(label=item["label"], xalign=0.0, hexpand=True)
+                if item.get("dynamic_label") == "tftp_server":
+                    popover.tftp_server_action_label = action_label
+                    MainApplicationMenu.update_tftp_server_label(parent_window, popover)
                 box.append(action_label)
                 accels = app.get_accels_for_action(item["action"])
                 if accels:
@@ -216,6 +225,19 @@ class MainApplicationMenu:
                 main_box.append(button)
 
         return popover, font_sizer_widget
+
+    @staticmethod
+    def update_tftp_server_label(parent_window, popover: Gtk.Popover) -> None:
+        label = getattr(popover, "tftp_server_action_label", None)
+        if not label:
+            return
+
+        is_running = bool(
+            getattr(getattr(parent_window, "tftp_server", None), "is_running", False)
+        )
+        label.set_text(
+            _("Stop TFTP Server") if is_running else _("Start TFTP Server")
+        )
 
 
 def create_session_menu(
