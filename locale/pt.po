@@ -4755,7 +4755,7 @@ msgstr "Shell Unix/Linux"
 # File: src/zashterminal/ui/dialogs/session_edit_dialog.py, line: 734
 #: NEEDS WORK
 msgid "Network Device CLI"
-msgstr "CLI de Equipamento de Rede"
+msgstr "Modo CLI"
 # 
 # File: usr/share/zashterminal/ui/dialogs/session_edit_dialog.py, line: 309
 #: NEEDS WORK
