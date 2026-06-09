@@ -496,6 +496,7 @@ class TerminalManager:
             int, Any
         ] = {}  # Dict[int, HighlightedTerminalProxy]
         self._highlight_manager = None
+        self._selection_copy_timers: Dict[int, int] = {}
         # Process check timer runs every 1 second for responsive context detection
         self._process_check_timer_id = GLib.timeout_add_seconds(
             1, self._periodic_process_check
@@ -1217,6 +1218,13 @@ class TerminalManager:
             )
             terminal.zashterminal_handler_ids.append(handler_id)
 
+            handler_id = terminal.connect(
+                "selection-changed",
+                self._on_terminal_selection_changed,
+                terminal_id,
+            )
+            terminal.zashterminal_handler_ids.append(handler_id)
+
             self.manual_ssh_tracker.track(terminal_id, terminal)
 
             focus_controller = Gtk.EventControllerFocus()
@@ -1228,6 +1236,7 @@ class TerminalManager:
 
             click_controller = Gtk.GestureClick()
             click_controller.set_button(1)
+            click_controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
             click_controller.connect(
                 "pressed", self._on_terminal_clicked, terminal, terminal_id
             )
@@ -1236,6 +1245,7 @@ class TerminalManager:
 
             right_click_controller = Gtk.GestureClick()
             right_click_controller.set_button(3)
+            right_click_controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
             right_click_controller.connect(
                 "pressed", self._on_terminal_right_clicked, terminal, terminal_id
             )
@@ -1946,6 +1956,8 @@ class TerminalManager:
             )
             self.osc7_tracker.untrack_terminal(terminal)
             self.manual_ssh_tracker.untrack(terminal_id)
+            if terminal_id in self._selection_copy_timers:
+                GLib.source_remove(self._selection_copy_timers.pop(terminal_id))
 
             if hasattr(terminal, "zashterminal_handler_ids"):
                 for handler_id in terminal.zashterminal_handler_ids:
@@ -2427,8 +2439,48 @@ class TerminalManager:
         }
 
     def copy_selection(self, terminal: Vte.Terminal):
+        self._copy_terminal_selection_to_clipboard(terminal)
+
+    def _on_terminal_selection_changed(
+        self, terminal: Vte.Terminal, terminal_id: int
+    ) -> None:
+        if terminal_id in self._selection_copy_timers:
+            GLib.source_remove(self._selection_copy_timers.pop(terminal_id))
+        self._selection_copy_timers[terminal_id] = GLib.timeout_add(
+            80, self._copy_selection_after_change, terminal, terminal_id
+        )
+
+    def _copy_selection_after_change(
+        self, terminal: Vte.Terminal, terminal_id: int
+    ) -> bool:
+        self._selection_copy_timers.pop(terminal_id, None)
+        try:
+            self._copy_terminal_selection_to_clipboard(terminal)
+        except Exception as e:
+            self.logger.debug(
+                f"Selection auto-copy failed for terminal {terminal_id}: {e}"
+            )
+        return GLib.SOURCE_REMOVE
+
+    def _copy_terminal_selection_to_clipboard(self, terminal: Vte.Terminal) -> bool:
         if terminal.get_has_selection():
             terminal.copy_clipboard_format(Vte.Format.TEXT)
+            return True
+
+        if not hasattr(terminal, "get_text_selected"):
+            return False
+
+        selected_text = terminal.get_text_selected(Vte.Format.TEXT)
+        if not selected_text:
+            return False
+
+        clipboard = (
+            terminal.get_clipboard()
+            if hasattr(terminal, "get_clipboard")
+            else terminal.get_display().get_clipboard()
+        )
+        clipboard.set(selected_text)
+        return True
 
     def paste_clipboard(self, terminal: Vte.Terminal):
         terminal.paste_clipboard()
