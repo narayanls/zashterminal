@@ -4,6 +4,7 @@ import atexit
 import os
 import threading
 from typing import TYPE_CHECKING, Optional
+from urllib.parse import unquote, urlparse
 
 import gi
 
@@ -37,6 +38,15 @@ from .utils.translation_utils import _
 
 if TYPE_CHECKING:
     from .window import CommTerminalWindow
+
+_DESKTOP_WORKING_DIRECTORY_PLACEHOLDERS = {
+    "%d",
+    "%D",
+    "%f",
+    "%F",
+    "%u",
+    "%U",
+}
 
 
 class CommTerminalApp(Adw.Application):
@@ -275,14 +285,45 @@ class CommTerminalApp(Adw.Application):
     def do_command_line(self, command_line):
         """Handle command line arguments for both initial and subsequent launches."""
         arguments = command_line.get_arguments()
-        self.logger.info(f"Processing command line: {arguments}")
-        self._process_and_execute_args(arguments)
+        cwd_uri = None
+        try:
+            cwd_uri = command_line.get_cwd()
+        except Exception as e:
+            self.logger.debug(f"Could not read command line cwd: {e}")
+        self.logger.info(f"Processing command line: {arguments}, cwd={cwd_uri}")
+        self._process_and_execute_args(arguments, cwd_uri)
         # Mark that we've already presented window to avoid duplicate present() in _on_activate
         self._window_already_presented = True
         self.activate()
         return 0
 
-    def _process_and_execute_args(self, arguments: list):
+    def _convert_file_uri_to_path(self, path: Optional[str]) -> Optional[str]:
+        """Convert local file:// URIs from desktop launchers into filesystem paths."""
+        if isinstance(path, bytes):
+            path = path.decode("utf-8", errors="replace")
+        if not path:
+            return path
+        if not path.startswith("file://"):
+            return path
+
+        try:
+            parsed = urlparse(path)
+            if parsed.scheme != "file":
+                return path
+            return unquote(parsed.path)
+        except Exception as e:
+            self.logger.debug(f"Could not convert file URI '{path}': {e}")
+            return path
+
+    def _normalize_working_directory_arg(
+        self, path: Optional[str]
+    ) -> Optional[str]:
+        path = self._convert_file_uri_to_path(path)
+        if path in _DESKTOP_WORKING_DIRECTORY_PLACEHOLDERS:
+            return None
+        return path
+
+    def _process_and_execute_args(self, arguments: list, cwd_uri: Optional[str] = None):
         """Parse arguments and decide what action to take."""
         working_directory, execute_command, ssh_target, close_after_execute = (
             None,
@@ -298,11 +339,15 @@ class CommTerminalApp(Adw.Application):
         while i < len(arguments):
             arg = arguments[i]
             if arg in ["-w", "--working-directory"] and i + 1 < len(arguments):
-                working_directory = arguments[i + 1]
+                working_directory = self._normalize_working_directory_arg(
+                    arguments[i + 1]
+                )
                 i += 2
                 continue
             elif arg.startswith("--working-directory="):
-                working_directory = arg.split("=", 1)[1]
+                working_directory = self._normalize_working_directory_arg(
+                    arg.split("=", 1)[1]
+                )
             elif arg in ["-e", "-x", "--execute"]:
                 # Mark where the execute command starts - capture all remaining args
                 execute_index = i + 1
@@ -319,8 +364,11 @@ class CommTerminalApp(Adw.Application):
             elif arg == "--new-window":
                 force_new_window = True
             elif not arg.startswith("-") and working_directory is None:
-                working_directory = arg
+                working_directory = self._normalize_working_directory_arg(arg)
             i += 1
+
+        if not working_directory:
+            working_directory = self._normalize_working_directory_arg(cwd_uri)
 
         # If we found -e/-x/--execute, capture all remaining arguments as the command
         if execute_index is not None and execute_index < len(arguments):

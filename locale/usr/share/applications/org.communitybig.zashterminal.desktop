@@ -92,6 +92,8 @@ Comment[zh]=一个带有会话管理的现代终端模拟器
 Comment[zh_CN]=一个带有会话管理的现代终端模拟器
 
 Exec=zashterminal %F
+X-TerminalArgDir=--working-directory
+X-TerminalArgExec=--execute
 Terminal=false
 Icon=zashterminal
 Categories=System;TerminalEmulator;GTK;
